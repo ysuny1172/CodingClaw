@@ -22,12 +22,35 @@ $env:OPENAI_MODEL="gpt-4.1-mini"
 
 ## Run
 
+Single task mode:
+
 ```powershell
 codingclaw "List the files in this project and explain what this repo does."
 ```
 
+Interactive mode:
+
+```powershell
+codingclaw
+```
+
+Run an initial task, then keep chatting in the same session:
+
+```powershell
+codingclaw -i "List the files in this project."
+```
+
 Session history is written to `.codingclaw/sessions/`.
 Trace logs are written to `.codingclaw/traces/`.
+
+Interactive commands:
+
+```text
+/help     Show commands.
+/session  Show current session and trace files.
+/exit     Exit interactive mode.
+/quit     Exit interactive mode.
+```
 
 ## Skills
 
