@@ -44,6 +44,12 @@ Interactive mode:
 codingclaw
 ```
 
+The prompt shows an estimated current context size:
+
+```text
+claw [~1,234 tokens]>
+```
+
 Run an initial task, then keep chatting in the same session:
 
 ```powershell
@@ -69,10 +75,12 @@ Interactive commands:
 
 ```text
 /help     Show commands.
-/session  Show current session and trace files.
+/session  Show current session, trace files, and token usage.
 /exit     Exit interactive mode.
 /quit     Exit interactive mode.
 ```
+
+Token usage display only reports token counts. It does not calculate cost. When the model returns OpenAI-compatible `usage`, CodingClaw records the latest request's prompt, completion, and total tokens. The live REPL prompt uses a local estimate and marks it with `~`.
 
 ## Skills
 

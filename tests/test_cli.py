@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from codingclaw.agent.types import AssistantResponse
-from codingclaw.cli import build_parser, resolve_session_store, run_interactive, should_run_interactive
+from codingclaw.agent.types import AssistantResponse, TokenUsage
+from codingclaw.cli import build_parser, interactive_prompt, resolve_session_store, run_interactive, should_run_interactive
 from codingclaw.config import Config
 from codingclaw.session import Session
 from codingclaw.session.session_store import SessionStore
@@ -17,7 +17,10 @@ class HistoryAwareFakeLLM:
 
     def chat(self, *, model, system_prompt, messages, tools):
         self.message_counts.append(len(messages))
-        return AssistantResponse(content=f"messages={len(messages)}")
+        return AssistantResponse(
+            content=f"messages={len(messages)}",
+            usage=TokenUsage(prompt_tokens=len(messages) * 10, completion_tokens=2, total_tokens=len(messages) * 10 + 2),
+        )
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -56,6 +59,15 @@ class CliTest(unittest.TestCase):
             self.assertIsNotNone(resolved)
             self.assertEqual(resolved.path, existing.path)
 
+    def test_interactive_prompt_shows_context_token_estimate(self):
+        with TemporaryDirectory() as tmp:
+            config = Config.from_env(workspace=tmp, api_key="fake", model="fake")
+            session = Session(config=config, llm=HistoryAwareFakeLLM())
+
+            prompt = interactive_prompt(session)
+
+            self.assertRegex(prompt, r"^claw \[~[\d,]+ tokens\]> $")
+
     def test_interactive_reuses_one_session_history(self):
         with TemporaryDirectory() as tmp:
             config = Config.from_env(workspace=tmp, api_key="fake", model="fake")
@@ -77,6 +89,8 @@ class CliTest(unittest.TestCase):
             self.assertIn("messages=1", output.getvalue())
             self.assertIn("messages=3", output.getvalue())
             self.assertIn(str(session.store.path), output.getvalue())
+            self.assertIn("Context: ~", output.getvalue())
+            self.assertIn("Last request: 30 prompt / 2 completion / 32 total tokens", output.getvalue())
             self.assertEqual(errors.getvalue(), "")
 
     def test_interactive_runs_initial_task_before_loop(self):

@@ -72,6 +72,10 @@ def run_prompt(session: Session, text: str, *, output: TextIO, error_output: Tex
     return True
 
 
+def interactive_prompt(session: Session) -> str:
+    return f"claw [{session.context_tokens_label()}]> "
+
+
 def resolve_session_store(args: argparse.Namespace, config: Config) -> SessionStore | None:
     if args.continue_session:
         return SessionStore.open_latest(config.workspace)
@@ -94,13 +98,14 @@ def run_interactive(
     print("CodingClaw interactive mode. Type /help for commands.", file=output)
     print(f"Session: {session.store.path}", file=output)
     print(f"Trace:   {session.trace.path}", file=output)
+    print(f"Context: {session.context_tokens_label()}", file=output)
 
     if initial_task:
         run_prompt(session, initial_task, output=output, error_output=error_output)
 
     while True:
         try:
-            text = input_fn("claw> ")
+            text = input_fn(interactive_prompt(session))
         except EOFError:
             print("", file=output)
             return 0
@@ -119,6 +124,10 @@ def run_interactive(
         if text == "/session":
             print(f"Session: {session.store.path}", file=output)
             print(f"Trace:   {session.trace.path}", file=output)
+            print(f"Context: {session.context_tokens_label()}", file=output)
+            latest_usage = session.latest_usage_label()
+            if latest_usage:
+                print(f"Last request: {latest_usage}", file=output)
             continue
         if text.startswith("/"):
             print(f"Unknown command: {text}. Type /help for commands.", file=error_output)

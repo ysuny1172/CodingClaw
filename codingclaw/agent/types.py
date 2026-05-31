@@ -47,11 +47,46 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class TokenUsage:
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    is_estimate: bool = False
+
+    @classmethod
+    def from_openai(cls, raw: dict[str, Any] | None) -> "TokenUsage | None":
+        if not isinstance(raw, dict):
+            return None
+        return cls(
+            prompt_tokens=_int_or_none(raw.get("prompt_tokens")),
+            completion_tokens=_int_or_none(raw.get("completion_tokens")),
+            total_tokens=_int_or_none(raw.get("total_tokens")),
+        )
+
+    @classmethod
+    def estimate(cls, prompt_tokens: int) -> "TokenUsage":
+        return cls(prompt_tokens=prompt_tokens, is_estimate=True)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "is_estimate": self.is_estimate,
+        }
+
+
+def _int_or_none(value: Any) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+@dataclass(frozen=True)
 class AssistantResponse:
     content: str
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
     finish_reason: str | None = None
+    usage: TokenUsage | None = None
 
 
 class LLMClient(Protocol):

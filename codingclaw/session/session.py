@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from codingclaw.agent import Agent
-from codingclaw.agent.types import AgentEvent, LLMClient
+from codingclaw.agent.types import AgentEvent, LLMClient, TokenUsage
 from codingclaw.config import Config
+from codingclaw.llm.tokens import estimate_prompt_tokens
 from codingclaw.tools import ToolContext, ToolRegistry
 from codingclaw.tools.command_tools import RunCommandTool
 from codingclaw.tools.file_tools import EditFileTool, ListFilesTool, ReadFileTool, WriteFileTool
@@ -25,6 +26,7 @@ class Session:
         self.trace = TraceLogger(self.workspace_root, run_id=self.store.session_id)
         self.resources = ResourceLoader(self.workspace_root)
         self.tools = self._create_tools()
+        self.latest_usage: TokenUsage | None = None
         self.agent = Agent(
             llm=self.llm,
             model=config.model,
@@ -60,6 +62,33 @@ class Session:
         )
         return self.agent.prompt(text)
 
+    def context_token_estimate(self) -> int:
+        loaded = self.resources.load()
+        system_prompt = build_system_prompt(
+            workspace_root=self.workspace_root,
+            tools=self.tools,
+            resources=loaded,
+        )
+        return estimate_prompt_tokens(
+            system_prompt=system_prompt,
+            messages=self.agent.state.messages,
+            tools=self.tools.openai_schemas(),
+        )
+
+    def context_tokens_label(self) -> str:
+        return f"~{self.context_token_estimate():,} tokens"
+
+    def latest_usage_label(self) -> str | None:
+        if not self.latest_usage or self.latest_usage.prompt_tokens is None:
+            return None
+        prefix = "~" if self.latest_usage.is_estimate else ""
+        parts = [f"{prefix}{self.latest_usage.prompt_tokens:,} prompt"]
+        if self.latest_usage.completion_tokens is not None:
+            parts.append(f"{self.latest_usage.completion_tokens:,} completion")
+        if self.latest_usage.total_tokens is not None:
+            parts.append(f"{self.latest_usage.total_tokens:,} total")
+        return " / ".join(parts) + " tokens"
+
     def _create_tools(self) -> ToolRegistry:
         registry = ToolRegistry(ToolContext(workspace_root=self.workspace_root))
         registry.register(ListFilesTool())
@@ -71,6 +100,14 @@ class Session:
 
     def _handle_agent_event(self, event: AgentEvent) -> None:
         self.trace.log(event)
+        usage = event.get("usage")
+        if event.get("type") in {"llm_request", "llm_response"} and isinstance(usage, dict):
+            self.latest_usage = TokenUsage(
+                prompt_tokens=usage.get("prompt_tokens") if isinstance(usage.get("prompt_tokens"), int) else None,
+                completion_tokens=usage.get("completion_tokens") if isinstance(usage.get("completion_tokens"), int) else None,
+                total_tokens=usage.get("total_tokens") if isinstance(usage.get("total_tokens"), int) else None,
+                is_estimate=bool(usage.get("is_estimate")),
+            )
         if event.get("type") == "message_end":
             message = event.get("message")
             if isinstance(message, dict):

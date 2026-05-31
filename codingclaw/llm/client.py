@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from codingclaw.agent.types import AssistantResponse, Message, ToolCall
+from codingclaw.agent.types import AssistantResponse, Message, TokenUsage, ToolCall
 from codingclaw.errors import ConfigError
 
 
@@ -69,4 +69,5 @@ class OpenAICompatibleClient:
             tool_calls=tool_calls,
             raw=raw,
             finish_reason=choice.get("finish_reason"),
+            usage=TokenUsage.from_openai(raw.get("usage")),
         )

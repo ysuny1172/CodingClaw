@@ -24,12 +24,13 @@ def run_agent_loop(
     final_text = ""
 
     for step in range(max_steps):
+        tool_schemas = tools.openai_schemas()
         emit(make_event("llm_request", step=step, message_count=len(messages)))
         response: AssistantResponse = llm.chat(
             model=model,
             system_prompt=system_prompt,
             messages=messages,
-            tools=tools.openai_schemas(),
+            tools=tool_schemas,
         )
         emit(
             make_event(
@@ -37,6 +38,7 @@ def run_agent_loop(
                 step=step,
                 finish_reason=response.finish_reason,
                 tool_call_count=len(response.tool_calls),
+                usage=response.usage.to_dict() if response.usage else None,
                 raw=response.raw,
             )
         )
