@@ -5,9 +5,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from codingclaw.agent.types import AssistantResponse
-from codingclaw.cli import build_parser, run_interactive, should_run_interactive
+from codingclaw.cli import build_parser, resolve_session_store, run_interactive, should_run_interactive
 from codingclaw.config import Config
 from codingclaw.session import Session
+from codingclaw.session.session_store import SessionStore
 
 
 class HistoryAwareFakeLLM:
@@ -38,6 +39,22 @@ class CliTest(unittest.TestCase):
         args = parse_args(["--interactive", "hello"])
 
         self.assertTrue(should_run_interactive(args))
+
+    def test_continue_without_task_enters_interactive_mode(self):
+        args = parse_args(["--continue"])
+
+        self.assertTrue(should_run_interactive(args))
+
+    def test_session_path_resolves_specific_store(self):
+        with TemporaryDirectory() as tmp:
+            config = Config.from_env(workspace=tmp, api_key="fake", model="fake")
+            existing = SessionStore(config.workspace)
+            args = parse_args(["--session", str(existing.path)])
+
+            resolved = resolve_session_store(args, config)
+
+            self.assertIsNotNone(resolved)
+            self.assertEqual(resolved.path, existing.path)
 
     def test_interactive_reuses_one_session_history(self):
         with TemporaryDirectory() as tmp:

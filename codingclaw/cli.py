@@ -7,6 +7,7 @@ from typing import Callable, TextIO
 from codingclaw.config import Config
 from codingclaw.llm import OpenAICompatibleClient
 from codingclaw.session import Session
+from codingclaw.session.session_store import SessionStore
 
 
 HELP_TEXT = """Commands:
@@ -33,6 +34,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run a single task and exit. This is the default when a task is provided.",
     )
+    resume = parser.add_mutually_exclusive_group()
+    resume.add_argument(
+        "--continue",
+        dest="continue_session",
+        action="store_true",
+        help="Resume the latest session in this workspace.",
+    )
+    resume.add_argument(
+        "--session",
+        dest="session_path",
+        default=None,
+        help="Resume a specific session JSONL file.",
+    )
     parser.add_argument("--workspace", default=None, help="Workspace directory. Defaults to current directory.")
     parser.add_argument("--model", default=None, help="Model name. Defaults to OPENAI_MODEL.")
     parser.add_argument("--base-url", default=None, help="OpenAI-compatible base URL. Defaults to OPENAI_BASE_URL.")
@@ -56,6 +70,14 @@ def run_prompt(session: Session, text: str, *, output: TextIO, error_output: Tex
     if final_text:
         print(final_text, file=output)
     return True
+
+
+def resolve_session_store(args: argparse.Namespace, config: Config) -> SessionStore | None:
+    if args.continue_session:
+        return SessionStore.open_latest(config.workspace)
+    if args.session_path:
+        return SessionStore.open(config.workspace, args.session_path)
+    return None
 
 
 def run_interactive(
@@ -119,7 +141,12 @@ def main(argv: list[str] | None = None) -> int:
         max_steps=args.max_steps,
     )
     llm = OpenAICompatibleClient(base_url=config.base_url, api_key=config.api_key)
-    session = Session(config=config, llm=llm)
+    try:
+        store = resolve_session_store(args, config)
+        session = Session(config=config, llm=llm, store=store)
+    except Exception as error:
+        print(f"codingclaw: {error}", file=sys.stderr)
+        return 1
 
     task = " ".join(args.task).strip()
     if should_run_interactive(args):

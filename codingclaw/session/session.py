@@ -7,7 +7,7 @@ from codingclaw.agent.types import AgentEvent, LLMClient
 from codingclaw.config import Config
 from codingclaw.tools import ToolContext, ToolRegistry
 from codingclaw.tools.command_tools import RunCommandTool
-from codingclaw.tools.file_tools import ListFilesTool, ReadFileTool, WriteFileTool
+from codingclaw.tools.file_tools import EditFileTool, ListFilesTool, ReadFileTool, WriteFileTool
 from codingclaw.trace import TraceLogger
 from .resources import ResourceLoader
 from .session_store import SessionStore
@@ -17,11 +17,11 @@ from .system_prompt import build_system_prompt
 class Session:
     """High-level coding-agent session abstraction."""
 
-    def __init__(self, *, config: Config, llm: LLMClient) -> None:
+    def __init__(self, *, config: Config, llm: LLMClient, store: SessionStore | None = None) -> None:
         self.config = config
         self.workspace_root = Path(config.workspace).resolve()
         self.llm = llm
-        self.store = SessionStore(self.workspace_root)
+        self.store = store or SessionStore(self.workspace_root)
         self.trace = TraceLogger(self.workspace_root, run_id=self.store.session_id)
         self.resources = ResourceLoader(self.workspace_root)
         self.tools = self._create_tools()
@@ -31,9 +31,17 @@ class Session:
             tools=self.tools,
             max_steps=config.max_steps,
         )
+        self.agent.state.messages = self.store.load_messages()
         self.agent.subscribe(self._handle_agent_event)
         self.store.append_model_change(config.model)
-        self.trace.log({"type": "run_created", "model": config.model, "workspace": str(self.workspace_root)})
+        self.trace.log(
+            {
+                "type": "run_created" if self.store.is_new else "session_resumed",
+                "model": config.model,
+                "workspace": str(self.workspace_root),
+                "message_count": len(self.agent.state.messages),
+            }
+        )
 
     def prompt(self, text: str) -> str:
         loaded = self.resources.load()
@@ -57,6 +65,7 @@ class Session:
         registry.register(ListFilesTool())
         registry.register(ReadFileTool())
         registry.register(WriteFileTool())
+        registry.register(EditFileTool())
         registry.register(RunCommandTool())
         return registry
 

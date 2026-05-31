@@ -6,6 +6,16 @@ CodingClaw is a minimal Python coding-agent harness inspired by Pi's layered arc
 - `Agent` stays small: it runs the LLM/tool loop and emits events.
 - Tools are OpenAI-compatible function tools.
 
+Built-in tools:
+
+```text
+list_files   List files and directories under the workspace.
+read_file    Read a UTF-8 text file.
+write_file   Write a full UTF-8 text file.
+edit_file    Replace an exact text segment in a UTF-8 text file.
+run_command  Run an allowlisted shell command in the workspace.
+```
+
 ## Install
 
 ```powershell
@@ -38,6 +48,18 @@ Run an initial task, then keep chatting in the same session:
 
 ```powershell
 codingclaw -i "List the files in this project."
+```
+
+Resume the latest session for the current workspace:
+
+```powershell
+codingclaw --continue
+```
+
+Resume a specific session file:
+
+```powershell
+codingclaw --session .codingclaw/sessions/20260531T120000Z_abc123.jsonl
 ```
 
 Session history is written to `.codingclaw/sessions/`.
