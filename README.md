@@ -108,6 +108,27 @@ description: Review Python code for correctness, maintainability, and missing te
 Use this workflow when the user asks for a code review.
 ```
 
+## Events and Hooks
+
+CodingClaw uses events for lifecycle observation and hooks for pre-action decisions.
+
+Core events include:
+
+```text
+agent_start
+turn_start
+message_start
+message_end
+llm_request
+llm_response
+tool_execution_start
+tool_execution_end
+turn_end
+agent_end
+```
+
+`Session.subscribe(listener)` lets callers observe events. The first hook API is `session.hooks.before_tool_call(...)`, which can allow, block, or rewrite a tool call before the tool executes.
+
 ## Tests
 
 ```powershell

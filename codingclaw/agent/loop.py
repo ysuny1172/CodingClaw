@@ -4,6 +4,8 @@ from typing import Callable
 
 from .events import make_event
 from .types import AgentEvent, AssistantResponse, LLMClient, Message
+from codingclaw.hooks import BeforeToolCallContext, HookRegistry
+from codingclaw.tools import ToolResult
 from codingclaw.tools.registry import ToolRegistry
 
 
@@ -17,6 +19,7 @@ def run_agent_loop(
     system_prompt: str,
     messages: list[Message],
     tools: ToolRegistry,
+    hooks: HookRegistry,
     max_steps: int,
     emit: EventSink,
 ) -> tuple[str, list[Message]]:
@@ -24,6 +27,9 @@ def run_agent_loop(
     final_text = ""
 
     for step in range(max_steps):
+        if step > 0:
+            emit(make_event("turn_start", turn_index=step))
+
         tool_schemas = tools.openai_schemas()
         emit(make_event("llm_request", step=step, message_count=len(messages)))
         response: AssistantResponse = llm.chat(
@@ -43,6 +49,7 @@ def run_agent_loop(
             )
         )
 
+        tool_results: list[Message] = []
         assistant_message: Message = {
             "role": "assistant",
             "content": response.content or "",
@@ -55,15 +62,46 @@ def run_agent_loop(
 
         final_text = response.content or final_text
         if not response.tool_calls:
+            emit(make_event("turn_end", turn_index=step, message=assistant_message, tool_results=tool_results))
             emit(make_event("agent_end", reason="stop", messages=messages))
             return final_text, messages
 
         for call in response.tool_calls:
-            emit(make_event("tool_call_start", tool_call=call.__dict__))
-            result = tools.execute(call.name, call.arguments)
+            args = call.arguments
             emit(
                 make_event(
-                    "tool_call_end",
+                    "tool_execution_start",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    args=args,
+                    tool_call=call.__dict__,
+                )
+            )
+            try:
+                decision = hooks.run_before_tool_call(
+                    BeforeToolCallContext(
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        arguments=args,
+                        messages=list(messages),
+                        workspace_root=tools.context.workspace_root,
+                    )
+                )
+                if decision.arguments is not None:
+                    args = decision.arguments
+                if decision.allow:
+                    result = tools.execute(call.name, args)
+                else:
+                    result = ToolResult.failure("ToolBlocked", decision.reason or "Tool execution was blocked")
+            except Exception as error:
+                result = ToolResult.failure("HookError", str(error))
+
+            emit(
+                make_event(
+                    "tool_execution_end",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    args=args,
                     tool_call=call.__dict__,
                     result=result.to_dict(),
                     is_error=not result.ok,
@@ -75,9 +113,12 @@ def run_agent_loop(
                 "name": call.name,
                 "content": result.to_json(),
             }
+            tool_results.append(tool_message)
             messages.append(tool_message)
             emit(make_event("message_start", message=tool_message))
             emit(make_event("message_end", message=tool_message))
+
+        emit(make_event("turn_end", turn_index=step, message=assistant_message, tool_results=tool_results))
 
     emit(make_event("agent_end", reason="max_steps", messages=messages))
     return final_text or "Stopped after reaching max_steps.", messages

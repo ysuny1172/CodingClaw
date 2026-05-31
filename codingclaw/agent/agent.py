@@ -6,6 +6,7 @@ from typing import Callable
 from .events import make_event
 from .loop import run_agent_loop
 from .types import AgentEvent, LLMClient, Message
+from codingclaw.hooks import HookRegistry
 from codingclaw.tools.registry import ToolRegistry
 
 
@@ -25,11 +26,13 @@ class Agent:
         llm: LLMClient,
         model: str,
         tools: ToolRegistry,
+        hooks: HookRegistry | None = None,
         system_prompt: str = "",
         max_steps: int = 20,
     ) -> None:
         self.llm = llm
         self.tools = tools
+        self.hooks = hooks or HookRegistry()
         self.max_steps = max_steps
         self.state = AgentState(system_prompt=system_prompt, model=model)
         self._listeners: list[Callable[[AgentEvent], None]] = []
@@ -51,6 +54,7 @@ class Agent:
         prompt_messages = text if isinstance(text, list) else [{"role": "user", "content": text}]
 
         self.emit(make_event("agent_start"))
+        self.emit(make_event("turn_start", turn_index=0))
         for message in prompt_messages:
             self.state.messages.append(message)
             self.emit(make_event("message_start", message=message))
@@ -62,6 +66,7 @@ class Agent:
             system_prompt=self.state.system_prompt,
             messages=self.state.messages,
             tools=self.tools,
+            hooks=self.hooks,
             max_steps=self.max_steps,
             emit=self.emit,
         )
@@ -70,12 +75,14 @@ class Agent:
 
     def continue_run(self) -> str:
         self.emit(make_event("agent_start"))
+        self.emit(make_event("turn_start", turn_index=0))
         final_text, next_messages = run_agent_loop(
             llm=self.llm,
             model=self.state.model,
             system_prompt=self.state.system_prompt,
             messages=self.state.messages,
             tools=self.tools,
+            hooks=self.hooks,
             max_steps=self.max_steps,
             emit=self.emit,
         )

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from codingclaw.agent import Agent
 from codingclaw.agent.types import AgentEvent, LLMClient, TokenUsage
 from codingclaw.config import Config
+from codingclaw.hooks import HookRegistry
 from codingclaw.llm.tokens import estimate_prompt_tokens
 from codingclaw.tools import ToolContext, ToolRegistry
 from codingclaw.tools.command_tools import RunCommandTool
@@ -26,11 +28,14 @@ class Session:
         self.trace = TraceLogger(self.workspace_root, run_id=self.store.session_id)
         self.resources = ResourceLoader(self.workspace_root)
         self.tools = self._create_tools()
+        self.hooks = HookRegistry()
         self.latest_usage: TokenUsage | None = None
+        self._listeners: list[Callable[[AgentEvent], None]] = []
         self.agent = Agent(
             llm=self.llm,
             model=config.model,
             tools=self.tools,
+            hooks=self.hooks,
             max_steps=config.max_steps,
         )
         self.agent.state.messages = self.store.load_messages()
@@ -61,6 +66,15 @@ class Session:
             }
         )
         return self.agent.prompt(text)
+
+    def subscribe(self, listener: Callable[[AgentEvent], None]) -> Callable[[], None]:
+        self._listeners.append(listener)
+
+        def unsubscribe() -> None:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return unsubscribe
 
     def context_token_estimate(self) -> int:
         loaded = self.resources.load()
@@ -112,3 +126,5 @@ class Session:
             message = event.get("message")
             if isinstance(message, dict):
                 self.store.append_message(message)
+        for listener in list(self._listeners):
+            listener(event)
