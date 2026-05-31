@@ -93,6 +93,25 @@ class CliTest(unittest.TestCase):
             self.assertIn("Last request: 30 prompt / 2 completion / 32 total tokens", output.getvalue())
             self.assertEqual(errors.getvalue(), "")
 
+    def test_interactive_compact_command_keeps_repl_running(self):
+        with TemporaryDirectory() as tmp:
+            config = Config.from_env(workspace=tmp, api_key="fake", model="fake")
+            llm = HistoryAwareFakeLLM()
+            session = Session(config=config, llm=llm)
+            inputs = iter(["/compact", "hello", "/exit"])
+            output = io.StringIO()
+
+            result = run_interactive(
+                session,
+                input_fn=lambda _prompt: next(inputs),
+                output=output,
+                error_output=io.StringIO(),
+            )
+
+            self.assertEqual(result, 0)
+            self.assertIn("No compaction was needed or possible.", output.getvalue())
+            self.assertIn("messages=1", output.getvalue())
+
     def test_interactive_runs_initial_task_before_loop(self):
         with TemporaryDirectory() as tmp:
             config = Config.from_env(workspace=tmp, api_key="fake", model="fake")

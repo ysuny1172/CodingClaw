@@ -28,6 +28,9 @@ pip install -e .
 $env:OPENAI_API_KEY="sk-..."
 $env:OPENAI_BASE_URL="https://api.openai.com/v1"
 $env:OPENAI_MODEL="gpt-4.1-mini"
+$env:CODINGCLAW_CONTEXT_WINDOW="128000"
+$env:CODINGCLAW_RESERVE_TOKENS="16384"
+$env:CODINGCLAW_KEEP_RECENT_TOKENS="20000"
 ```
 
 ## Run
@@ -76,11 +79,25 @@ Interactive commands:
 ```text
 /help     Show commands.
 /session  Show current session, trace files, and token usage.
+/compact  Compact the current session context.
 /exit     Exit interactive mode.
 /quit     Exit interactive mode.
 ```
 
 Token usage display only reports token counts. It does not calculate cost. When the model returns OpenAI-compatible `usage`, CodingClaw records the latest request's prompt, completion, and total tokens. The live REPL prompt uses a local estimate and marks it with `~`.
+
+## Context Compaction
+
+CodingClaw can compact long sessions by summarizing older messages and keeping recent context. Auto-compaction runs after assistant responses when estimated context exceeds `context_window - reserve_tokens`. If a model request fails with a context-limit error, CodingClaw compacts and retries that request once.
+
+Configure compaction with CLI flags:
+
+```powershell
+codingclaw --context-window 128000 --reserve-tokens 16384 --keep-recent-tokens 20000
+codingclaw --no-auto-compact
+```
+
+Compaction appends a `compaction` entry to the session JSONL. Resume rebuilds context as summary plus kept messages; older session files without compaction entries still load normally.
 
 ## Skills
 

@@ -13,6 +13,7 @@ from codingclaw.session.session_store import SessionStore
 HELP_TEXT = """Commands:
   /help     Show this help message.
   /session  Show the current session and trace files.
+  /compact  Compact the current session context.
   /exit     Exit interactive mode.
   /quit     Exit interactive mode.
 """
@@ -52,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", default=None, help="OpenAI-compatible base URL. Defaults to OPENAI_BASE_URL.")
     parser.add_argument("--api-key", default=None, help="API key. Defaults to OPENAI_API_KEY.")
     parser.add_argument("--max-steps", type=int, default=20, help="Maximum agent loop steps.")
+    parser.add_argument("--context-window", type=int, default=None, help="Model context window in tokens. Defaults to CODINGCLAW_CONTEXT_WINDOW or 128000.")
+    parser.add_argument("--reserve-tokens", type=int, default=None, help="Tokens reserved for the model response. Defaults to CODINGCLAW_RESERVE_TOKENS or 16384.")
+    parser.add_argument("--keep-recent-tokens", type=int, default=None, help="Approximate recent context tokens to keep during compaction. Defaults to CODINGCLAW_KEEP_RECENT_TOKENS or 20000.")
+    parser.add_argument("--no-auto-compact", action="store_true", help="Disable automatic threshold compaction.")
     return parser
 
 
@@ -69,6 +74,23 @@ def run_prompt(session: Session, text: str, *, output: TextIO, error_output: Tex
         return False
     if final_text:
         print(final_text, file=output)
+    return True
+
+
+def run_compact(session: Session, *, output: TextIO, error_output: TextIO) -> bool:
+    try:
+        result = session.compact(reason="manual")
+    except Exception as error:
+        print(f"codingclaw: {error}", file=error_output)
+        return False
+    if not result:
+        print("No compaction was needed or possible.", file=output)
+        return True
+    print(
+        f"Compacted {result.tokens_before:,} tokens. Kept from message {result.first_kept_message_id}.",
+        file=output,
+    )
+    print(f"Session: {session.store.path}", file=output)
     return True
 
 
@@ -129,6 +151,9 @@ def run_interactive(
             if latest_usage:
                 print(f"Last request: {latest_usage}", file=output)
             continue
+        if text == "/compact":
+            run_compact(session, output=output, error_output=error_output)
+            continue
         if text.startswith("/"):
             print(f"Unknown command: {text}. Type /help for commands.", file=error_output)
             continue
@@ -148,6 +173,10 @@ def main(argv: list[str] | None = None) -> int:
         base_url=args.base_url,
         api_key=args.api_key,
         max_steps=args.max_steps,
+        context_window=args.context_window,
+        reserve_tokens=args.reserve_tokens,
+        keep_recent_tokens=args.keep_recent_tokens,
+        auto_compact=not args.no_auto_compact,
     )
     llm = OpenAICompatibleClient(base_url=config.base_url, api_key=config.api_key)
     try:

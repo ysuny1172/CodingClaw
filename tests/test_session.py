@@ -27,6 +27,25 @@ class ToolCallingFakeLLM:
         return self.responses.pop(0)
 
 
+class CompactionFakeLLM:
+    def __init__(self, *, overflow_once: bool = False, summary_fails: bool = False):
+        self.overflow_once = overflow_once
+        self.summary_fails = summary_fails
+        self.normal_calls = 0
+        self.summary_calls = 0
+
+    def chat(self, *, model, system_prompt, messages, tools):
+        if "context summarization assistant" in system_prompt:
+            self.summary_calls += 1
+            if self.summary_fails:
+                raise RuntimeError("summary service unavailable")
+            return AssistantResponse(content="compact summary")
+        self.normal_calls += 1
+        if self.overflow_once and self.normal_calls == 2:
+            raise RuntimeError("context_length_exceeded: maximum context length")
+        return AssistantResponse(content=f"answer {self.normal_calls}")
+
+
 class SessionTest(unittest.TestCase):
     def test_session_persists_messages_and_trace(self):
         with TemporaryDirectory() as tmp:
@@ -68,6 +87,21 @@ class SessionTest(unittest.TestCase):
             self.assertEqual([message["role"] for message in resumed_llm.messages], ["user", "assistant", "user"])
             self.assertEqual(SessionStore.open_latest(config.workspace).path, first.store.path)
 
+    def test_session_store_loads_compacted_context(self):
+        with TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            store.append_message({"role": "user", "content": "old"})
+            store.append_message({"role": "assistant", "content": "older"})
+            first_kept = store.load_entries()[2]["id"]
+            store.append_compaction("summary", first_kept, 100, "manual")
+            store.append_message({"role": "user", "content": "new"})
+
+            messages = store.load_messages()
+
+            self.assertEqual(messages[0]["role"], "user")
+            self.assertIn("<context_summary", messages[0]["content"])
+            self.assertEqual([message["content"] for message in messages[1:]], ["older", "new"])
+
     def test_session_trace_records_tool_execution_events(self):
         with TemporaryDirectory() as tmp:
             Path(tmp, "hello.txt").write_text("hi", encoding="utf-8")
@@ -80,6 +114,67 @@ class SessionTest(unittest.TestCase):
             trace_types = [json.loads(line)["type"] for line in session.trace.path.read_text(encoding="utf-8").splitlines()]
             self.assertIn("tool_execution_start", trace_types)
             self.assertIn("tool_execution_end", trace_types)
+
+    def test_session_auto_compacts_after_threshold(self):
+        with TemporaryDirectory() as tmp:
+            config = Config.from_env(
+                workspace=tmp,
+                api_key="fake",
+                model="fake",
+                context_window=50,
+                reserve_tokens=0,
+                keep_recent_tokens=5,
+            )
+            llm = CompactionFakeLLM()
+            session = Session(config=config, llm=llm)
+            events = []
+            session.subscribe(events.append)
+
+            result = session.prompt("old " * 100)
+
+            self.assertEqual(result, "answer 1")
+            self.assertEqual(llm.summary_calls, 1)
+            self.assertTrue(any(entry["type"] == "compaction" for entry in session.store.load_entries()))
+            self.assertIn("compaction_start", [event["type"] for event in events])
+            self.assertIn("compaction_end", [event["type"] for event in events])
+
+    def test_session_compacts_and_retries_after_context_overflow(self):
+        with TemporaryDirectory() as tmp:
+            config = Config.from_env(
+                workspace=tmp,
+                api_key="fake",
+                model="fake",
+                context_window=10_000,
+                reserve_tokens=0,
+                keep_recent_tokens=5,
+                auto_compact=False,
+            )
+            llm = CompactionFakeLLM(overflow_once=True)
+            session = Session(config=config, llm=llm)
+
+            self.assertEqual(session.prompt("old context"), "answer 1")
+            self.assertEqual(session.prompt("new request"), "answer 3")
+
+            self.assertEqual(llm.summary_calls, 1)
+            self.assertTrue(any(entry.get("reason") == "overflow" for entry in session.store.load_entries()))
+
+    def test_overflow_compaction_failure_raises_original_error(self):
+        with TemporaryDirectory() as tmp:
+            config = Config.from_env(
+                workspace=tmp,
+                api_key="fake",
+                model="fake",
+                context_window=10_000,
+                reserve_tokens=0,
+                keep_recent_tokens=5,
+                auto_compact=False,
+            )
+            llm = CompactionFakeLLM(overflow_once=True, summary_fails=True)
+            session = Session(config=config, llm=llm)
+
+            session.prompt("old context")
+            with self.assertRaisesRegex(RuntimeError, "context_length_exceeded"):
+                session.prompt("new request")
 
 
 if __name__ == "__main__":

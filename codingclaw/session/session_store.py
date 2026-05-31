@@ -55,6 +55,63 @@ class SessionStore:
         return cls.open(workspace_root, candidates[-1])
 
     def load_messages(self) -> list[Message]:
+        entries = self.load_entries()
+        latest_compaction_index = self._latest_compaction_index(entries)
+        if latest_compaction_index is None:
+            return [entry["message"] for entry in entries if entry.get("type") == "message" and isinstance(entry.get("message"), dict)]
+
+        compaction = entries[latest_compaction_index]
+        first_kept_message_id = compaction.get("first_kept_message_id")
+        messages: list[Message] = [self._summary_message(str(compaction.get("summary") or ""), compaction.get("tokens_before"))]
+
+        found_first_kept = False
+        for entry in entries[:latest_compaction_index]:
+            if entry.get("type") != "message" or not isinstance(entry.get("message"), dict):
+                continue
+            if entry.get("id") == first_kept_message_id:
+                found_first_kept = True
+            if found_first_kept:
+                messages.append(entry["message"])
+
+        for entry in entries[latest_compaction_index + 1 :]:
+            if entry.get("type") == "message" and isinstance(entry.get("message"), dict):
+                messages.append(entry["message"])
+        return messages
+
+    def load_entries(self) -> list[dict]:
+        entries: list[dict] = []
+        if not self.path.exists():
+            return entries
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                entries.append(json.loads(line))
+        return entries
+
+    def active_message_entries(self) -> tuple[list[dict], dict | None]:
+        entries = self.load_entries()
+        latest_compaction_index = self._latest_compaction_index(entries)
+        if latest_compaction_index is None:
+            return [entry for entry in entries if entry.get("type") == "message" and isinstance(entry.get("message"), dict)], None
+
+        compaction = entries[latest_compaction_index]
+        first_kept_message_id = compaction.get("first_kept_message_id")
+        active: list[dict] = []
+        found_first_kept = False
+        for entry in entries[:latest_compaction_index]:
+            if entry.get("type") != "message" or not isinstance(entry.get("message"), dict):
+                continue
+            if entry.get("id") == first_kept_message_id:
+                found_first_kept = True
+            if found_first_kept:
+                active.append(entry)
+        active.extend(
+            entry
+            for entry in entries[latest_compaction_index + 1 :]
+            if entry.get("type") == "message" and isinstance(entry.get("message"), dict)
+        )
+        return active, compaction
+
+    def load_raw_messages(self) -> list[Message]:
         messages: list[Message] = []
         if not self.path.exists():
             return messages
@@ -87,6 +144,19 @@ class SessionStore:
             }
         )
 
+    def append_compaction(self, summary: str, first_kept_message_id: str, tokens_before: int, reason: str) -> None:
+        self._append(
+            {
+                "type": "compaction",
+                "id": uuid4().hex[:8],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "summary": summary,
+                "first_kept_message_id": first_kept_message_id,
+                "tokens_before": tokens_before,
+                "reason": reason,
+            }
+        )
+
     def _append(self, entry: dict) -> None:
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -104,3 +174,16 @@ class SessionStore:
                 session_id = entry.get("id")
                 return str(session_id) if session_id else None
         return None
+
+    def _latest_compaction_index(self, entries: list[dict]) -> int | None:
+        for index in range(len(entries) - 1, -1, -1):
+            if entries[index].get("type") == "compaction":
+                return index
+        return None
+
+    def _summary_message(self, summary: str, tokens_before: object) -> Message:
+        token_text = f" tokens_before={tokens_before}" if isinstance(tokens_before, int) else ""
+        return {
+            "role": "user",
+            "content": f"<context_summary{token_text}>\n{summary}\n</context_summary>",
+        }
