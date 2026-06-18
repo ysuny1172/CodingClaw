@@ -36,8 +36,14 @@ class Config:
             base_url=(base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/"),
             api_key=api_key if api_key is not None else os.getenv("OPENAI_API_KEY"),
             max_steps=max_steps,
-            context_window=context_window or int(os.getenv("CODINGCLAW_CONTEXT_WINDOW", "128000")),
-            reserve_tokens=reserve_tokens or int(os.getenv("CODINGCLAW_RESERVE_TOKENS", "16384")),
-            keep_recent_tokens=keep_recent_tokens or int(os.getenv("CODINGCLAW_KEEP_RECENT_TOKENS", "20000")),
+            context_window=context_window
+            if context_window is not None
+            else int(os.getenv("CODINGCLAW_CONTEXT_WINDOW", "128000")),
+            reserve_tokens=reserve_tokens
+            if reserve_tokens is not None
+            else int(os.getenv("CODINGCLAW_RESERVE_TOKENS", "16384")),
+            keep_recent_tokens=keep_recent_tokens
+            if keep_recent_tokens is not None
+            else int(os.getenv("CODINGCLAW_KEEP_RECENT_TOKENS", "20000")),
             auto_compact=auto_compact if auto_compact is not None else os.getenv("CODINGCLAW_AUTO_COMPACT", "1") not in {"0", "false", "False"},
         )

@@ -1,6 +1,7 @@
+import json
 import unittest
 
-from codingclaw.session.compaction import generate_summary, prepare_compaction
+from codingclaw.session.compaction import collect_compaction_details, generate_summary, prepare_compaction
 from codingclaw.agent.types import AssistantResponse
 
 
@@ -41,12 +42,13 @@ class CompactionTest(unittest.TestCase):
             entries,
             previous_compaction=None,
             tokens_before=200,
-            keep_recent_tokens=5,
+            keep_recent_tokens=12,
         )
 
         self.assertIsNotNone(result)
-        self.assertEqual(result.first_kept_message_id, "m4")
-        self.assertEqual([message["content"] for message in result.messages_to_summarize], ["old " * 20, "older " * 20, "recent"])
+        self.assertEqual(result.first_kept_message_id, "m3")
+        self.assertEqual([message["content"] for message in result.messages_to_summarize], ["old " * 20, "older " * 20])
+        self.assertEqual([message["content"] for message in result.kept_messages], ["recent", "done"])
 
     def test_prepare_compaction_does_not_keep_orphan_tool_message(self):
         entries = [
@@ -83,6 +85,79 @@ class CompactionTest(unittest.TestCase):
         prompt = llm.calls[0]["messages"][0]["content"]
         self.assertIn("<previous-summary>", prompt)
         self.assertIn("previous summary", prompt)
+
+    def test_prepare_compaction_marks_split_turn_when_single_turn_is_too_large(self):
+        entries = [
+            entry("m1", "user", "start " * 20),
+            entry("m2", "assistant", "work " * 20),
+            entry("m3", "tool", "tool result " * 40, tool_call_id="call_1", name="read_file"),
+            entry("m4", "assistant", "tail"),
+        ]
+
+        result = prepare_compaction(
+            entries,
+            previous_compaction=None,
+            tokens_before=300,
+            keep_recent_tokens=5,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result.is_split_turn)
+        self.assertEqual(result.first_kept_message_id, "m4")
+
+    def test_collect_compaction_details_accumulates_file_operations(self):
+        tool_calls = [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": json.dumps({"path": "a.py"})},
+            },
+            {
+                "id": "call_2",
+                "type": "function",
+                "function": {"name": "edit_file", "arguments": json.dumps({"path": "b.py"})},
+            },
+        ]
+        messages = [{"role": "assistant", "content": "", "tool_calls": tool_calls}]
+
+        details = collect_compaction_details(
+            messages,
+            previous_compaction={"details": {"read_files": ["old.py"], "modified_files": ["existing.py"]}},
+        )
+
+        self.assertEqual(details["read_files"], ["old.py", "a.py"])
+        self.assertEqual(details["modified_files"], ["existing.py", "b.py"])
+
+    def test_generate_summary_includes_custom_instructions_and_file_blocks(self):
+        llm = CapturingLLM()
+        preparation = prepare_compaction(
+            [
+                entry(
+                    "m1",
+                    "assistant",
+                    "",
+                    tool_calls=[
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": json.dumps({"path": "a.py"})},
+                        }
+                    ],
+                ),
+                entry("m2", "user", "recent"),
+            ],
+            previous_compaction=None,
+            tokens_before=100,
+            keep_recent_tokens=1,
+            instructions="focus on safety decisions",
+        )
+
+        self.assertIsNotNone(preparation)
+        summary = generate_summary(llm=llm, model="fake", preparation=preparation, reserve_tokens=100)
+
+        prompt = llm.calls[0]["messages"][0]["content"]
+        self.assertIn("focus on safety decisions", prompt)
+        self.assertIn("<read-files>\na.py\n</read-files>", summary)
 
 
 if __name__ == "__main__":

@@ -66,7 +66,7 @@ class CliTest(unittest.TestCase):
 
             prompt = interactive_prompt(session)
 
-            self.assertRegex(prompt, r"^claw \[~[\d,]+ tokens\]> $")
+            self.assertRegex(prompt, r"^claw \[~[\d,]+/128,000 tokens estimate\]> $")
 
     def test_interactive_reuses_one_session_history(self):
         with TemporaryDirectory() as tmp:

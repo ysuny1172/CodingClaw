@@ -8,12 +8,12 @@ from codingclaw.agent.types import AgentEvent, LLMClient, TokenUsage
 from codingclaw.agent.events import make_event
 from codingclaw.config import Config
 from codingclaw.hooks import HookRegistry
-from codingclaw.llm.tokens import estimate_prompt_tokens
 from codingclaw.tools import ToolContext, ToolRegistry
 from codingclaw.tools.command_tools import RunCommandTool
 from codingclaw.tools.file_tools import EditFileTool, ListFilesTool, ReadFileTool, WriteFileTool
 from codingclaw.trace import TraceLogger
-from .compaction import CompactionReason, CompactionResult, generate_summary, is_context_overflow_error, prepare_compaction, should_compact
+from .compaction import CompactionReason, CompactionResult
+from .context import ContextManager, ContextUsage
 from .resources import ResourceLoader
 from .session_store import SessionStore
 from .system_prompt import build_system_prompt
@@ -31,7 +31,6 @@ class Session:
         self.resources = ResourceLoader(self.workspace_root)
         self.tools = self._create_tools()
         self.hooks = HookRegistry()
-        self.latest_usage: TokenUsage | None = None
         self._listeners: list[Callable[[AgentEvent], None]] = []
         self.agent = Agent(
             llm=self.llm,
@@ -42,6 +41,18 @@ class Session:
         )
         self.agent.state.messages = self.store.load_messages()
         self.agent.subscribe(self._handle_agent_event)
+        self.context = ContextManager(
+            config=self.config,
+            llm=self.llm,
+            store=self.store,
+            hooks=self.hooks,
+            workspace_root=self.workspace_root,
+            get_system_prompt=lambda: self.agent.state.system_prompt,
+            get_messages=lambda: self.agent.state.messages,
+            set_messages=self._set_agent_messages,
+            get_tool_schemas=self.tools.openai_schemas,
+            emit=self._emit_session_event,
+        )
         self.store.append_model_change(config.model)
         self.trace.log(
             {
@@ -55,18 +66,25 @@ class Session:
     def prompt(self, text: str) -> str:
         self._refresh_system_prompt()
         try:
+            self.context.maybe_compact_before_prompt(text)
+        except Exception:
+            pass
+        try:
             final_text = self.agent.prompt(text)
         except Exception as error:
-            if not is_context_overflow_error(error):
+            if not self.context.is_context_overflow_error(error):
                 raise
             try:
-                result = self.compact(reason="overflow")
+                result = self.context.compact(reason="overflow")
             except Exception:
                 raise error
             if not result:
                 raise error
             final_text = self.agent.continue_run()
-        self._maybe_auto_compact()
+        try:
+            self.context.maybe_auto_compact()
+        except Exception:
+            pass
         return final_text
 
     def _refresh_system_prompt(self) -> None:
@@ -95,98 +113,19 @@ class Session:
         return unsubscribe
 
     def context_token_estimate(self) -> int:
-        loaded = self.resources.load()
-        system_prompt = build_system_prompt(
-            workspace_root=self.workspace_root,
-            tools=self.tools,
-            resources=loaded,
-        )
-        return estimate_prompt_tokens(
-            system_prompt=system_prompt,
-            messages=self.agent.state.messages,
-            tools=self.tools.openai_schemas(),
-        )
+        return self.context.context_token_estimate()
+
+    def context_usage(self) -> ContextUsage:
+        return self.context.context_usage()
 
     def context_tokens_label(self) -> str:
-        return f"~{self.context_token_estimate():,} tokens"
+        return self.context.context_tokens_label()
 
-    def compact(self, reason: CompactionReason = "manual") -> CompactionResult | None:
-        tokens_before = self.context_token_estimate()
-        self._emit_session_event(make_event("compaction_start", reason=reason, tokens_before=tokens_before))
-        active_entries, previous_compaction = self.store.active_message_entries()
-        preparation = prepare_compaction(
-            active_entries,
-            previous_compaction=previous_compaction,
-            tokens_before=tokens_before,
-            keep_recent_tokens=self.config.keep_recent_tokens,
-        )
-        if not preparation:
-            self._emit_session_event(
-                make_event("compaction_end", reason=reason, result=None, aborted=False, will_retry=False)
-            )
-            return None
-
-        try:
-            summary = generate_summary(
-                llm=self.llm,
-                model=self.config.model,
-                preparation=preparation,
-                reserve_tokens=self.config.reserve_tokens,
-            )
-        except Exception as error:
-            self._emit_session_event(
-                make_event(
-                    "compaction_end",
-                    reason=reason,
-                    result=None,
-                    aborted=False,
-                    will_retry=False,
-                    error_message=str(error),
-                )
-            )
-            raise
-        result = CompactionResult(
-            summary=summary,
-            first_kept_message_id=preparation.first_kept_message_id,
-            tokens_before=tokens_before,
-            reason=reason,
-        )
-        self.store.append_compaction(
-            summary=result.summary,
-            first_kept_message_id=result.first_kept_message_id,
-            tokens_before=result.tokens_before,
-            reason=reason,
-        )
-        self.agent.state.messages = self.store.load_messages()
-        self._emit_session_event(
-            make_event(
-                "compaction_end",
-                reason=reason,
-                result=result.__dict__,
-                aborted=False,
-                will_retry=reason == "overflow",
-            )
-        )
-        return result
+    def compact(self, reason: CompactionReason = "manual", instructions: str | None = None) -> CompactionResult | None:
+        return self.context.compact(reason=reason, instructions=instructions)
 
     def latest_usage_label(self) -> str | None:
-        if not self.latest_usage or self.latest_usage.prompt_tokens is None:
-            return None
-        prefix = "~" if self.latest_usage.is_estimate else ""
-        parts = [f"{prefix}{self.latest_usage.prompt_tokens:,} prompt"]
-        if self.latest_usage.completion_tokens is not None:
-            parts.append(f"{self.latest_usage.completion_tokens:,} completion")
-        if self.latest_usage.total_tokens is not None:
-            parts.append(f"{self.latest_usage.total_tokens:,} total")
-        return " / ".join(parts) + " tokens"
-
-    def _maybe_auto_compact(self) -> None:
-        tokens = self.context_token_estimate()
-        if should_compact(tokens, self.config):
-            try:
-                self.compact(reason="threshold")
-            except Exception:
-                return
+        return self.context.latest_usage_label()
 
     def _create_tools(self) -> ToolRegistry:
         registry = ToolRegistry(ToolContext(workspace_root=self.workspace_root))
@@ -201,11 +140,15 @@ class Session:
         self.trace.log(event)
         usage = event.get("usage")
         if event.get("type") in {"llm_request", "llm_response"} and isinstance(usage, dict):
-            self.latest_usage = TokenUsage(
-                prompt_tokens=usage.get("prompt_tokens") if isinstance(usage.get("prompt_tokens"), int) else None,
-                completion_tokens=usage.get("completion_tokens") if isinstance(usage.get("completion_tokens"), int) else None,
-                total_tokens=usage.get("total_tokens") if isinstance(usage.get("total_tokens"), int) else None,
-                is_estimate=bool(usage.get("is_estimate")),
+            self.context.record_usage(
+                TokenUsage(
+                    prompt_tokens=usage.get("prompt_tokens") if isinstance(usage.get("prompt_tokens"), int) else None,
+                    completion_tokens=usage.get("completion_tokens")
+                    if isinstance(usage.get("completion_tokens"), int)
+                    else None,
+                    total_tokens=usage.get("total_tokens") if isinstance(usage.get("total_tokens"), int) else None,
+                    is_estimate=bool(usage.get("is_estimate")),
+                )
             )
         if event.get("type") == "message_end":
             message = event.get("message")
@@ -220,3 +163,6 @@ class Session:
     def _notify_listeners(self, event: AgentEvent) -> None:
         for listener in list(self._listeners):
             listener(event)
+
+    def _set_agent_messages(self, messages: list[dict]) -> None:
+        self.agent.state.messages = messages

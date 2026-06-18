@@ -1,0 +1,82 @@
+[
+  {
+    "id": "memory_fact_retention_001",
+    "category": "context_memory",
+    "setup_files": {},
+    "config": {
+      "context_window": 100000,
+      "reserve_tokens": 1000,
+      "keep_recent_tokens": 20,
+      "max_steps": 12,
+      "auto_compact": false
+    },
+    "turns": [
+      {
+        "user": "记住这些项目事实：项目代号是 Aurora，发布日期是 7 月 15 日，负责人是 Lin。"
+      },
+      {
+        "user": "下面是无关噪音，请不要把它当成项目事实：alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu。请只回复收到。",
+        "force_compact_after": true
+      },
+      {
+        "user": "刚才我让你记住的项目代号、发布日期、负责人分别是什么？"
+      }
+    ],
+    "assertions": {
+      "require_compaction": true,
+      "must_include_any": [["Aurora"], ["7 月 15", "7月15", "July 15", "Jul 15", "7/15", "07-15"], ["Lin"]],
+      "must_not_include": ["不知道", "不确定"],
+      "summary_must_include_any": [["Aurora"], ["7 月 15", "7月15", "July 15", "Jul 15", "7/15", "07-15"], ["Lin"]],
+      "summary_must_not_include": ["alpha beta gamma"]
+    },
+    "manual_judge": "通过条件：压缩后仍能准确回答关键事实，没有被无关噪音污染。"
+  },
+  {
+    "id": "auto_memory_fact_retention_001",
+    "category": "context_memory",
+    "source": "synthetic",
+    "primary_skill": "factual_memory",
+    "stressors": ["auto_compaction", "long_noise", "early_fact"],
+    "setup_files": {},
+    "config": {
+      "context_window": 2600,
+      "reserve_tokens": 600,
+      "keep_recent_tokens": 500,
+      "max_steps": 12,
+      "auto_compact": true
+    },
+    "turns": [
+      {
+        "user": "请记住这个关键事实：客户代号是 Northstar，合同编号是 CN-8842，续约日期是 2026-09-30。只回复收到。"
+      },
+      {
+        "repeat_noise": {
+          "count": 4,
+          "template": "下面是第 {index} 段无关日志，只用于撑大上下文，不代表任何真实项目事实：{noise}。请只回复收到。",
+          "noise": "audit-log stream event alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega. 这是一段无关日志，包含随机排查记录、临时编号、重复状态、排队任务、缓存命中、网络抖动、时间戳、调试备注、空操作、重复告警、无效字段、临时实验、废弃配置、示例文本、占位说明、路由追踪、后台指标、队列长度、心跳检查、无关用户反馈、归档标签、灰度批次、模拟请求、重复状态、缓存命中、网络抖动、时间戳、调试备注、空操作、重复告警、无效字段、临时实验、废弃配置、示例文本、占位说明、路由追踪、后台指标、队列长度、心跳检查、无关用户反馈、归档标签、灰度批次、模拟请求。请忽略这些日志，不要把它们当成需要记住的事实。"
+        }
+      },
+      {
+        "user": "刚才最早让我记住的客户代号、合同编号、续约日期分别是什么？"
+      }
+    ],
+    "assertions": {
+      "require_compaction": true,
+      "expected_compaction_reason": "threshold",
+      "min_compactions": 1,
+      "min_tokens_before": 2000,
+      "must_include_any": [
+        ["Northstar"],
+        ["CN-8842"],
+        ["2026-09-30", "September 30, 2026", "9/30/2026"]
+      ],
+      "must_not_include": ["不知道", "不确定", "无关日志"],
+      "summary_must_include_any": [
+        ["Northstar"],
+        ["CN-8842"],
+        ["2026-09-30", "September 30, 2026", "9/30/2026"]
+      ]
+    },
+    "manual_judge": "通过条件：自动 threshold 压缩后，仍能从摘要里恢复最早的客户代号、合同编号和续约日期。"
+  }
+]

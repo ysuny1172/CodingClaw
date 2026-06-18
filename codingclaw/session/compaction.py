@@ -14,19 +14,32 @@ CompactionReason = Literal["manual", "threshold", "overflow"]
 
 @dataclass(frozen=True)
 class CompactionPreparation:
-    first_kept_message_id: str
+    first_kept_entry_id: str
     messages_to_summarize: list[Message]
     kept_messages: list[Message]
     tokens_before: int
     previous_summary: str | None = None
+    details: dict | None = None
+    is_split_turn: bool = False
+    instructions: str | None = None
+
+    @property
+    def first_kept_message_id(self) -> str:
+        return self.first_kept_entry_id
 
 
 @dataclass(frozen=True)
 class CompactionResult:
     summary: str
-    first_kept_message_id: str
+    first_kept_entry_id: str
     tokens_before: int
     reason: CompactionReason
+    details: dict | None = None
+    from_hook: bool = False
+
+    @property
+    def first_kept_message_id(self) -> str:
+        return self.first_kept_entry_id
 
 
 SUMMARIZATION_SYSTEM_PROMPT = """You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
@@ -81,6 +94,12 @@ Update the existing structured summary with new information. RULES:
 Use the same structured format as the existing summary."""
 
 
+CUSTOM_INSTRUCTIONS_PROMPT = """Additional user instructions for this compaction:
+{instructions}
+
+Follow these instructions while preserving the required summary structure."""
+
+
 def should_compact(context_tokens: int, config: Config) -> bool:
     if not config.auto_compact:
         return False
@@ -93,11 +112,12 @@ def prepare_compaction(
     previous_compaction: dict | None,
     tokens_before: int,
     keep_recent_tokens: int,
+    instructions: str | None = None,
 ) -> CompactionPreparation | None:
     if not active_message_entries:
         return None
 
-    first_kept_index = _find_first_kept_index(active_message_entries, keep_recent_tokens)
+    first_kept_index, is_split_turn = _find_first_kept_index(active_message_entries, keep_recent_tokens)
     if first_kept_index <= 0:
         return None
 
@@ -110,13 +130,17 @@ def prepare_compaction(
     previous_summary = None
     if previous_compaction:
         previous_summary = str(previous_compaction.get("summary") or "")
+    details = collect_compaction_details(messages_to_summarize, previous_compaction)
 
     return CompactionPreparation(
-        first_kept_message_id=first_kept_message_id,
+        first_kept_entry_id=first_kept_message_id,
         messages_to_summarize=messages_to_summarize,
         kept_messages=kept_messages,
         tokens_before=tokens_before,
         previous_summary=previous_summary,
+        details=details,
+        is_split_turn=is_split_turn,
+        instructions=instructions,
     )
 
 
@@ -134,6 +158,10 @@ def generate_summary(
         prompt += UPDATE_SUMMARIZATION_PROMPT
     else:
         prompt += SUMMARIZATION_PROMPT
+    if preparation.is_split_turn:
+        prompt += "\n\nThe kept context starts in the middle of a large turn. Summarize the earlier part as turn-prefix context."
+    if preparation.instructions:
+        prompt += "\n\n" + CUSTOM_INSTRUCTIONS_PROMPT.format(instructions=preparation.instructions)
 
     response = llm.chat(
         model=model,
@@ -144,6 +172,7 @@ def generate_summary(
     summary = response.content.strip()
     if not summary:
         raise RuntimeError("Compaction summarization returned an empty summary.")
+    summary = append_details_to_summary(summary, preparation.details or {})
     return summary[: max(reserve_tokens * 16, 8_000)]
 
 
@@ -171,6 +200,39 @@ def serialize_messages(messages: list[Message]) -> str:
     return "\n\n".join(parts)
 
 
+def collect_compaction_details(messages: list[Message], previous_compaction: dict | None = None) -> dict[str, list[str]]:
+    read_files = _detail_list(previous_compaction, "read_files")
+    modified_files = _detail_list(previous_compaction, "modified_files")
+
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or []:
+            name, args = _tool_call_name_args(call)
+            path = _normalized_path(args.get("path")) if isinstance(args, dict) else None
+            if not path:
+                continue
+            if name == "read_file":
+                _append_unique(read_files, path)
+            elif name in {"write_file", "edit_file"}:
+                _append_unique(modified_files, path)
+
+    return {"read_files": read_files, "modified_files": modified_files}
+
+
+def append_details_to_summary(summary: str, details: dict) -> str:
+    read_files = [str(item) for item in details.get("read_files") or []]
+    modified_files = [str(item) for item in details.get("modified_files") or []]
+    blocks: list[str] = []
+    if read_files:
+        blocks.append("<read-files>\n" + "\n".join(read_files) + "\n</read-files>")
+    if modified_files:
+        blocks.append("<modified-files>\n" + "\n".join(modified_files) + "\n</modified-files>")
+    if not blocks:
+        return summary
+    return summary.rstrip() + "\n\n" + "\n\n".join(blocks)
+
+
 def is_context_overflow_error(error: Exception) -> bool:
     text = str(error).lower()
     needles = [
@@ -183,7 +245,7 @@ def is_context_overflow_error(error: Exception) -> bool:
     return any(needle in text for needle in needles)
 
 
-def _find_first_kept_index(entries: list[dict], keep_recent_tokens: int) -> int:
+def _find_first_kept_index(entries: list[dict], keep_recent_tokens: int) -> tuple[int, bool]:
     accumulated = 0
     first_kept_index = 0
     for index in range(len(entries) - 1, -1, -1):
@@ -193,9 +255,12 @@ def _find_first_kept_index(entries: list[dict], keep_recent_tokens: int) -> int:
         if accumulated >= keep_recent_tokens:
             break
 
-    while first_kept_index > 0 and entries[first_kept_index]["message"].get("role") == "tool":
-        first_kept_index -= 1
-    return first_kept_index
+    first_kept_index = _avoid_orphan_tool(entries, first_kept_index)
+    turn_start = _turn_start_index(entries, first_kept_index)
+    turn_tokens = _entries_tokens(entries[turn_start:])
+    if turn_start > 0 and turn_tokens <= keep_recent_tokens:
+        return turn_start, False
+    return first_kept_index, turn_start < first_kept_index
 
 
 def estimate_message_tokens(message: Message) -> int:
@@ -217,3 +282,66 @@ def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return f"{text[:max_chars]}\n\n[... {len(text) - max_chars} more characters truncated]"
+
+
+def _avoid_orphan_tool(entries: list[dict], index: int) -> int:
+    while index > 0 and entries[index]["message"].get("role") == "tool":
+        index -= 1
+    return index
+
+
+def _turn_start_index(entries: list[dict], index: int) -> int:
+    current = index
+    while current > 0:
+        role = entries[current]["message"].get("role")
+        if role == "user":
+            return current
+        previous_role = entries[current - 1]["message"].get("role")
+        if previous_role == "user":
+            return current - 1
+        current -= 1
+    return 0
+
+
+def _entries_tokens(entries: list[dict]) -> int:
+    return sum(estimate_message_tokens(entry["message"]) for entry in entries)
+
+
+def _detail_list(compaction: dict | None, key: str) -> list[str]:
+    details = compaction.get("details") if isinstance(compaction, dict) else None
+    if not isinstance(details, dict):
+        return []
+    value = details.get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value not in items:
+        items.append(value)
+
+
+def _normalized_path(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.replace("\\", "/")
+
+
+def _tool_call_name_args(call: object) -> tuple[str, dict]:
+    if not isinstance(call, dict):
+        return "", {}
+    function = call.get("function")
+    if isinstance(function, dict):
+        name = str(function.get("name") or call.get("name") or "")
+        args = function.get("arguments") or {}
+    else:
+        name = str(call.get("name") or "")
+        args = call.get("arguments") or {}
+    if isinstance(args, str):
+        try:
+            parsed = json.loads(args)
+        except json.JSONDecodeError:
+            parsed = {}
+        args = parsed
+    return name, args if isinstance(args, dict) else {}

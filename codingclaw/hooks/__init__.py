@@ -1,3 +1,9 @@
-from .registry import BeforeToolCallContext, HookRegistry, ToolDecision
+from .registry import BeforeCompactionContext, BeforeToolCallContext, CompactionDecision, HookRegistry, ToolDecision
 
-__all__ = ["BeforeToolCallContext", "HookRegistry", "ToolDecision"]
+__all__ = [
+    "BeforeCompactionContext",
+    "BeforeToolCallContext",
+    "CompactionDecision",
+    "HookRegistry",
+    "ToolDecision",
+]

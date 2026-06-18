@@ -8,3 +8,5 @@ venv/
 *.egg-info/
 .env
 .codingclaw/
+evals/runs/
+evals/context_runs/

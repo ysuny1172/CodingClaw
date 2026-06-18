@@ -13,7 +13,8 @@ from codingclaw.session.session_store import SessionStore
 HELP_TEXT = """Commands:
   /help     Show this help message.
   /session  Show the current session and trace files.
-  /compact  Compact the current session context.
+  /compact [instructions]
+            Compact the current session context.
   /exit     Exit interactive mode.
   /quit     Exit interactive mode.
 """
@@ -77,9 +78,9 @@ def run_prompt(session: Session, text: str, *, output: TextIO, error_output: Tex
     return True
 
 
-def run_compact(session: Session, *, output: TextIO, error_output: TextIO) -> bool:
+def run_compact(session: Session, *, output: TextIO, error_output: TextIO, instructions: str | None = None) -> bool:
     try:
-        result = session.compact(reason="manual")
+        result = session.compact(reason="manual", instructions=instructions)
     except Exception as error:
         print(f"codingclaw: {error}", file=error_output)
         return False
@@ -151,8 +152,9 @@ def run_interactive(
             if latest_usage:
                 print(f"Last request: {latest_usage}", file=output)
             continue
-        if text == "/compact":
-            run_compact(session, output=output, error_output=error_output)
+        if text == "/compact" or text.startswith("/compact "):
+            instructions = text[len("/compact") :].strip() or None
+            run_compact(session, output=output, error_output=error_output, instructions=instructions)
             continue
         if text.startswith("/"):
             print(f"Unknown command: {text}. Type /help for commands.", file=error_output)

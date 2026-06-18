@@ -61,7 +61,7 @@ class SessionStore:
             return [entry["message"] for entry in entries if entry.get("type") == "message" and isinstance(entry.get("message"), dict)]
 
         compaction = entries[latest_compaction_index]
-        first_kept_message_id = compaction.get("first_kept_message_id")
+        first_kept_message_id = self._first_kept_id(compaction)
         messages: list[Message] = [self._summary_message(str(compaction.get("summary") or ""), compaction.get("tokens_before"))]
 
         found_first_kept = False
@@ -94,7 +94,7 @@ class SessionStore:
             return [entry for entry in entries if entry.get("type") == "message" and isinstance(entry.get("message"), dict)], None
 
         compaction = entries[latest_compaction_index]
-        first_kept_message_id = compaction.get("first_kept_message_id")
+        first_kept_message_id = self._first_kept_id(compaction)
         active: list[dict] = []
         found_first_kept = False
         for entry in entries[:latest_compaction_index]:
@@ -104,6 +104,13 @@ class SessionStore:
                 found_first_kept = True
             if found_first_kept:
                 active.append(entry)
+        if first_kept_message_id and not found_first_kept:
+            active = [
+                entry
+                for entry in entries[latest_compaction_index + 1 :]
+                if entry.get("type") == "message" and isinstance(entry.get("message"), dict)
+            ]
+            return active, compaction
         active.extend(
             entry
             for entry in entries[latest_compaction_index + 1 :]
@@ -144,16 +151,34 @@ class SessionStore:
             }
         )
 
-    def append_compaction(self, summary: str, first_kept_message_id: str, tokens_before: int, reason: str) -> None:
+    def append_compaction(
+        self,
+        summary: str,
+        first_kept_message_id: str | None = None,
+        tokens_before: int = 0,
+        reason: str = "manual",
+        *,
+        first_kept_entry_id: str | None = None,
+        details: dict | None = None,
+        from_hook: bool = False,
+    ) -> None:
+        kept_id = first_kept_entry_id or first_kept_message_id
+        if kept_id is None:
+            raise ValueError("first_kept_entry_id is required")
+        parent_id = self._latest_entry_id()
         self._append(
             {
                 "type": "compaction",
                 "id": uuid4().hex[:8],
+                "parent_id": parent_id,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "summary": summary,
-                "first_kept_message_id": first_kept_message_id,
+                "first_kept_entry_id": kept_id,
+                "first_kept_message_id": kept_id,
                 "tokens_before": tokens_before,
                 "reason": reason,
+                "details": details or {"read_files": [], "modified_files": []},
+                "from_hook": from_hook,
             }
         )
 
@@ -180,6 +205,17 @@ class SessionStore:
             if entries[index].get("type") == "compaction":
                 return index
         return None
+
+    def _latest_entry_id(self) -> str | None:
+        entries = self.load_entries()
+        for entry in reversed(entries):
+            entry_id = entry.get("id")
+            if entry_id:
+                return str(entry_id)
+        return None
+
+    def _first_kept_id(self, compaction: dict) -> object:
+        return compaction.get("first_kept_entry_id") or compaction.get("first_kept_message_id")
 
     def _summary_message(self, summary: str, tokens_before: object) -> Message:
         token_text = f" tokens_before={tokens_before}" if isinstance(tokens_before, int) else ""

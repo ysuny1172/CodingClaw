@@ -47,10 +47,10 @@ Interactive mode:
 codingclaw
 ```
 
-The prompt shows an estimated current context size:
+The prompt shows current context usage. Provider usage is preferred when available; otherwise CodingClaw shows a local estimate:
 
 ```text
-claw [~1,234 tokens]>
+claw [~1,234/128,000 tokens estimate]>
 ```
 
 Run an initial task, then keep chatting in the same session:
@@ -79,16 +79,17 @@ Interactive commands:
 ```text
 /help     Show commands.
 /session  Show current session, trace files, and token usage.
-/compact  Compact the current session context.
+/compact [instructions]
+          Compact the current session context, optionally with summary guidance.
 /exit     Exit interactive mode.
 /quit     Exit interactive mode.
 ```
 
-Token usage display only reports token counts. It does not calculate cost. When the model returns OpenAI-compatible `usage`, CodingClaw records the latest request's prompt, completion, and total tokens. The live REPL prompt uses a local estimate and marks it with `~`.
+Token usage display only reports token counts. It does not calculate cost. When the model returns OpenAI-compatible `usage`, CodingClaw records the latest request's prompt, completion, and total tokens. After compaction, stale provider usage is discarded and the prompt falls back to an estimate until the next model response.
 
 ## Context Compaction
 
-CodingClaw can compact long sessions by summarizing older messages and keeping recent context. Auto-compaction runs after assistant responses when estimated context exceeds `context_window - reserve_tokens`. If a model request fails with a context-limit error, CodingClaw compacts and retries that request once.
+CodingClaw can compact long sessions by summarizing older messages and keeping recent context. Auto-compaction checks the projected context before a request and the active context after assistant responses when usage exceeds `context_window - reserve_tokens`. If a model request fails with a context-limit error, CodingClaw compacts and retries that request once.
 
 Configure compaction with CLI flags:
 
@@ -97,7 +98,13 @@ codingclaw --context-window 128000 --reserve-tokens 16384 --keep-recent-tokens 2
 codingclaw --no-auto-compact
 ```
 
-Compaction appends a `compaction` entry to the session JSONL. Resume rebuilds context as summary plus kept messages; older session files without compaction entries still load normally.
+Manual compaction supports optional instructions:
+
+```text
+/compact focus on open decisions and modified files
+```
+
+Compaction appends a Pi-like `compaction` entry to the session JSONL with `summary`, `first_kept_entry_id`, `tokens_before`, `reason`, and `details`. Resume rebuilds context as summary plus kept messages; older session files using `first_kept_message_id` still load normally. Default details track cumulative `read_files` and `modified_files`, and summaries include `<read-files>` / `<modified-files>` blocks when applicable.
 
 ## Skills
 
@@ -144,7 +151,7 @@ turn_end
 agent_end
 ```
 
-`Session.subscribe(listener)` lets callers observe events. The first hook API is `session.hooks.before_tool_call(...)`, which can allow, block, or rewrite a tool call before the tool executes.
+`Session.subscribe(listener)` lets callers observe events. Tool hooks use `session.hooks.before_tool_call(...)`, which can allow, block, or rewrite a tool call before the tool executes. Context hooks use `session.hooks.register_before_compaction(...)`, which can block compaction, add details, or provide a summary override.
 
 ## Tests
 
