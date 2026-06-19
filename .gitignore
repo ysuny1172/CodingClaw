@@ -10,3 +10,4 @@ venv/
 .codingclaw/
 evals/runs/
 evals/context_runs/
+evals/swebench_runs/

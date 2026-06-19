@@ -158,3 +158,40 @@ agent_end
 ```powershell
 python -m unittest discover -s tests
 ```
+
+## SWE-bench Pass@1 Runner
+
+Run the SWE-bench runner inside WSL from the SWE-bench virtual environment. CodingClaw is
+invoked through its own CLI, so the runner does not depend on CodingClaw's internal Python APIs.
+
+Generate a prediction for one instance:
+
+```bash
+source ~/swebench-learning/SWE-bench/.venv/bin/activate
+
+python ~/codingclaw/scripts/run_swebench.py generate \
+  --run-id codingclaw-flask-4045-v1 \
+  --instance-id pallets__flask-4045 \
+  --codingclaw-executable ~/codingclaw/.venv/bin/codingclaw
+```
+
+Evaluate the saved prediction without calling the model again:
+
+```bash
+python ~/codingclaw/scripts/run_swebench.py evaluate \
+  --run-id codingclaw-flask-4045-v1 \
+  --swebench-root ~/swebench-learning/SWE-bench
+```
+
+Generate and evaluate the fixed five-instance sample:
+
+```bash
+python ~/codingclaw/scripts/run_swebench.py all \
+  --run-id codingclaw-lite-5-v1 \
+  --instances-file ~/codingclaw/evals/swebench_lite_random_5.json \
+  --codingclaw-executable ~/codingclaw/.venv/bin/codingclaw \
+  --swebench-root ~/swebench-learning/SWE-bench
+```
+
+Use `--resume` with `generate` or `all` to skip instances that already produced a pass@1
+prediction. Run artifacts are written to `evals/swebench_runs/<run-id>/`.
