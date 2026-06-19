@@ -522,6 +522,10 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         metadata["evaluation_error"] = f"Harness exited with code {completed.returncode}"
         metadata["updated_at"] = utc_now()
         write_json(metadata_path, metadata)
+        detail = (completed.stderr or completed.stdout or "").strip()
+        if detail:
+            detail = "\n".join(detail.splitlines()[-20:])
+            raise RuntimeError(f"{metadata['evaluation_error']}:\n{detail}")
         raise RuntimeError(metadata["evaluation_error"])
 
     summary_path = find_harness_summary(args.swebench_root, metadata["model_name_or_path"], args.run_id)
@@ -591,10 +595,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def normalize_args(args: argparse.Namespace) -> argparse.Namespace:
-    for name in ("runs_dir", "instances_file", "codingclaw_executable", "swebench_root", "swebench_python"):
+    for name in ("runs_dir", "instances_file", "swebench_root"):
         value = getattr(args, name, None)
         if isinstance(value, Path):
             setattr(args, name, value.expanduser().resolve())
+    for name in ("codingclaw_executable", "swebench_python"):
+        value = getattr(args, name, None)
+        if isinstance(value, Path):
+            expanded = value.expanduser()
+            if not expanded.is_absolute():
+                expanded = Path.cwd() / expanded
+            setattr(args, name, expanded.absolute())
     return args
 
 

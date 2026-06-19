@@ -2,6 +2,7 @@ import importlib.util
 import json
 import subprocess
 import unittest
+from argparse import Namespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -352,6 +353,31 @@ class EvalRunnersTest(unittest.TestCase):
         )
 
         self.assertEqual(summary["pass_rate"], 40.0)
+
+    def test_swebench_normalize_args_preserves_executable_symlinks(self):
+        run_swebench = load_script("run_swebench")
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "python-real"
+            target.write_text("", encoding="utf-8")
+            link = root / "python"
+            try:
+                link.symlink_to(target)
+            except OSError:
+                self.skipTest("Creating symlinks is not available on this system")
+            args = Namespace(
+                runs_dir=root / ".",
+                instances_file=None,
+                swebench_root=root / ".",
+                codingclaw_executable=link,
+                swebench_python=link,
+            )
+
+            normalized = run_swebench.normalize_args(args)
+
+        self.assertEqual(normalized.swebench_python, link.absolute())
+        self.assertNotEqual(normalized.swebench_python, target.resolve())
 
 
 if __name__ == "__main__":
