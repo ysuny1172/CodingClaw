@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from codingclaw.unicode import sanitize_json_value
+
 
 class TraceLogger:
     def __init__(self, root: Path, run_id: str | None = None) -> None:
@@ -14,10 +16,12 @@ class TraceLogger:
         self.path = self.dir / f"{self.run_id}.jsonl"
 
     def log(self, event: dict) -> None:
-        payload = {
-            "run_id": self.run_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            **event,
-        }
+        payload = sanitize_json_value(
+            {
+                "run_id": self.run_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                **event,
+            }
+        )
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")

@@ -4,6 +4,7 @@ import subprocess
 from typing import Any
 
 from codingclaw.sandbox import SandboxPolicy
+from codingclaw.unicode import decode_utf8_output
 from .base import ToolContext, ToolResult
 
 MAX_OUTPUT_CHARS = 40_000
@@ -35,15 +36,14 @@ class RunCommandTool:
                 command,
                 shell=True,
                 cwd=context.workspace_root,
-                text=True,
                 capture_output=True,
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as error:
             return ToolResult.failure("TimeoutExpired", f"Command timed out after {timeout}s: {error}")
 
-        stdout = completed.stdout or ""
-        stderr = completed.stderr or ""
+        stdout = decode_utf8_output(completed.stdout)
+        stderr = decode_utf8_output(completed.stderr)
         stdout_truncated = len(stdout) > MAX_OUTPUT_CHARS
         stderr_truncated = len(stderr) > MAX_OUTPUT_CHARS
         return ToolResult.success(

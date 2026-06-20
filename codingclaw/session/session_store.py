@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from codingclaw.agent.types import Message
+from codingclaw.unicode import sanitize_json_value
 
 
 class SessionStore:
@@ -84,7 +85,7 @@ class SessionStore:
             return entries
         for line in self.path.read_text(encoding="utf-8").splitlines():
             if line.strip():
-                entries.append(json.loads(line))
+                entries.append(sanitize_json_value(json.loads(line)))
         return entries
 
     def active_message_entries(self) -> tuple[list[dict], dict | None]:
@@ -125,7 +126,7 @@ class SessionStore:
         for line in self.path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            entry = json.loads(line)
+            entry = sanitize_json_value(json.loads(line))
             message = entry.get("message")
             if entry.get("type") == "message" and isinstance(message, dict):
                 messages.append(message)
@@ -137,7 +138,7 @@ class SessionStore:
                 "type": "message",
                 "id": uuid4().hex[:8],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "message": message,
+                "message": sanitize_json_value(message),
             }
         )
 
@@ -183,6 +184,7 @@ class SessionStore:
         )
 
     def _append(self, entry: dict) -> None:
+        entry = sanitize_json_value(entry)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -194,7 +196,7 @@ class SessionStore:
         for line in self.path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            entry = json.loads(line)
+            entry = sanitize_json_value(json.loads(line))
             if entry.get("type") == "session":
                 session_id = entry.get("id")
                 return str(session_id) if session_id else None

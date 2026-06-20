@@ -7,6 +7,7 @@ from typing import Any
 
 from codingclaw.agent.types import AssistantResponse, Message, TokenUsage, ToolCall
 from codingclaw.errors import ConfigError
+from codingclaw.unicode import sanitize_json_value
 
 
 class OpenAICompatibleClient:
@@ -40,10 +41,11 @@ class OpenAICompatibleClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        payload = sanitize_json_value(payload)
 
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",

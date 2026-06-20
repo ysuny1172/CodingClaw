@@ -1,9 +1,12 @@
 import json
+import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from codingclaw.tools import ToolContext, ToolRegistry
+from codingclaw.tools.command_tools import RunCommandTool
 from codingclaw.tools.file_tools import EditFileTool, ReadFileTool, WriteFileTool
 
 
@@ -61,6 +64,21 @@ class ToolsTest(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertIn("ReplacementCountMismatch", json.dumps(result.to_dict()))
             self.assertEqual(path.read_text(encoding="utf-8"), "same same")
+
+    def test_run_command_replaces_invalid_utf8_bytes(self):
+        with TemporaryDirectory() as tmp:
+            completed = subprocess.CompletedProcess(
+                args="echo test",
+                returncode=0,
+                stdout=b"valid\xe4invalid",
+                stderr=b"error\xff",
+            )
+            with patch("codingclaw.tools.command_tools.subprocess.run", return_value=completed):
+                result = RunCommandTool().execute({"command": "echo test"}, ToolContext(Path(tmp)))
+
+            self.assertTrue(result.ok)
+            self.assertEqual(result.data["stdout"], "valid\ufffdinvalid")
+            self.assertEqual(result.data["stderr"], "error\ufffd")
 
 
 if __name__ == "__main__":
