@@ -12,6 +12,7 @@ from codingclaw.tools import ToolContext, ToolRegistry
 from codingclaw.tools.command_tools import RunCommandTool
 from codingclaw.tools.file_tools import EditFileTool, ListFilesTool, ReadFileTool, WriteFileTool
 from codingclaw.trace import TraceLogger
+from codingclaw.unicode import sanitize_text
 from .compaction import CompactionReason, CompactionResult
 from .context import ContextManager, ContextUsage
 from .resources import ResourceLoader
@@ -64,6 +65,7 @@ class Session:
         )
 
     def prompt(self, text: str) -> str:
+        text = sanitize_text(text)
         self._refresh_system_prompt()
         try:
             self.context.maybe_compact_before_prompt(text)

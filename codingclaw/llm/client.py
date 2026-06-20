@@ -55,7 +55,7 @@ class OpenAICompatibleClient:
 
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                raw = json.loads(response.read().decode("utf-8"))
+                raw = sanitize_json_value(json.loads(response.read().decode("utf-8")))
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"LLM request failed with HTTP {error.code}: {detail}") from error

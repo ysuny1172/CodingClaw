@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from codingclaw.unicode import sanitize_json_value
+
 
 @dataclass(frozen=True)
 class ToolContext:
@@ -26,7 +28,7 @@ class ToolResult:
         return cls(ok=False, data=None, error={"type": error_type, "message": message})
 
     def to_dict(self) -> dict[str, Any]:
-        return {"ok": self.ok, "data": self.data, "error": self.error}
+        return sanitize_json_value({"ok": self.ok, "data": self.data, "error": self.error})
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False)
