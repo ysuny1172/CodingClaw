@@ -88,6 +88,7 @@ class CliTest(unittest.TestCase):
             self.assertEqual(llm.message_counts, [1, 3])
             self.assertIn("messages=1", output.getvalue())
             self.assertIn("messages=3", output.getvalue())
+            self.assertIn(f"Workspace: {session.workspace_root}", output.getvalue())
             self.assertIn(str(session.store.path), output.getvalue())
             self.assertIn("Context: ~", output.getvalue())
             self.assertIn("Last request: 30 prompt / 2 completion / 32 total tokens", output.getvalue())

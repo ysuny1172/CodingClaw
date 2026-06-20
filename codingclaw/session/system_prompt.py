@@ -51,16 +51,37 @@ def build_system_prompt(*, workspace_root: Path, tools: ToolRegistry, resources:
         "relevant test suite when feasible.\n"
     )
     prompt += (
+        "- For bug fixes, reproduce the reported behavior before editing when feasible and add or update a focused "
+        "regression test that fails before the fix and passes after it.\n"
+    )
+    prompt += (
         "- Compare post-change failures with the baseline. Classify failures as pre-existing baseline failures, "
         "environment failures, or regressions caused by the change; do not treat them as interchangeable.\n"
     )
     prompt += (
-        "- If the declared project environment cannot run, avoid repeated dependency experiments. Use safe static "
-        "or narrowly isolated checks when useful, and clearly report what could and could not be verified.\n"
+        "- If the declared project environment cannot run, avoid repeated dependency experiments. Build the closest "
+        "safe executable reproduction you can, and clearly report what could and could not be verified.\n"
     )
     prompt += (
         "- Before finishing, inspect the final diff and report the files changed, tests run, results, and any "
         "remaining verification limitations.\n"
+    )
+    prompt += "\nBehavioral verification:\n"
+    prompt += (
+        "- Derive the externally observable behavior the task requires before choosing an implementation. Preserve "
+        "related parsing, rendering, indexing, serialization, cross-reference, and public API semantics.\n"
+    )
+    prompt += (
+        "- Verify the public output or structure users depend on, such as a parsed tree, generated artifact, rendered "
+        "text, stored value, protocol response, or command result. A helper-level check alone is not sufficient.\n"
+    )
+    prompt += (
+        "- Do not mistake suppressing an exception, warning, or validation error for a complete fix. Confirm that the "
+        "accepted input is interpreted and represented correctly after the change.\n"
+    )
+    prompt += (
+        "- Before concluding that a fix is correct, test the reported example and at least one nearby existing case "
+        "that could regress. Inspect exact assertions and node or output boundaries, not only whether code executes.\n"
     )
     prompt += "\nTest integrity:\n"
     prompt += (

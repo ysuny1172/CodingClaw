@@ -80,6 +80,25 @@ class SessionTest(unittest.TestCase):
             self.assertIn("turn_end", trace_entry_types)
             self.assertIn("agent_end", [event["type"] for event in events])
 
+    def test_trace_failure_does_not_interrupt_session_persistence(self):
+        with TemporaryDirectory() as tmp:
+            config = Config.from_env(workspace=tmp, api_key="fake", model="fake")
+            session = Session(config=config, llm=FakeLLM())
+
+            def fail_trace(_event):
+                raise UnicodeEncodeError("utf-8", "\udce4", 0, 1, "surrogates not allowed")
+
+            session.trace.log = fail_trace
+
+            result = session.prompt("hello")
+
+            self.assertEqual(result, "done")
+            self.assertEqual(
+                [(message["role"], message["content"]) for message in session.store.load_messages()],
+                [("user", "hello"), ("assistant", "done")],
+            )
+            self.assertTrue(session.trace_errors)
+
     def test_session_can_resume_persisted_messages(self):
         with TemporaryDirectory() as tmp:
             config = Config.from_env(workspace=tmp, api_key="fake", model="fake")

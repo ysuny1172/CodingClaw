@@ -32,6 +32,7 @@ class Session:
         self.resources = ResourceLoader(self.workspace_root)
         self.tools = self._create_tools()
         self.hooks = HookRegistry()
+        self.trace_errors: list[str] = []
         self._listeners: list[Callable[[AgentEvent], None]] = []
         self.agent = Agent(
             llm=self.llm,
@@ -55,7 +56,7 @@ class Session:
             emit=self._emit_session_event,
         )
         self.store.append_model_change(config.model)
-        self.trace.log(
+        self._log_trace(
             {
                 "type": "run_created" if self.store.is_new else "session_resumed",
                 "model": config.model,
@@ -63,6 +64,14 @@ class Session:
                 "message_count": len(self.agent.state.messages),
             }
         )
+        if self.store.unicode_repairs:
+            self._log_trace(
+                {
+                    "type": "session_unicode_repaired",
+                    "entry_count": self.store.unicode_repairs,
+                    "session_path": str(self.store.path),
+                }
+            )
 
     def prompt(self, text: str) -> str:
         text = sanitize_text(text)
@@ -96,7 +105,7 @@ class Session:
             tools=self.tools,
             resources=loaded,
         )
-        self.trace.log(
+        self._log_trace(
             {
                 "type": "resources_loaded",
                 "skills": [skill.name for skill in loaded.skills],
@@ -139,7 +148,7 @@ class Session:
         return registry
 
     def _handle_agent_event(self, event: AgentEvent) -> None:
-        self.trace.log(event)
+        self._log_trace(event)
         usage = event.get("usage")
         if event.get("type") in {"llm_request", "llm_response"} and isinstance(usage, dict):
             self.context.record_usage(
@@ -159,7 +168,7 @@ class Session:
         self._notify_listeners(event)
 
     def _emit_session_event(self, event: AgentEvent) -> None:
-        self.trace.log(event)
+        self._log_trace(event)
         self._notify_listeners(event)
 
     def _notify_listeners(self, event: AgentEvent) -> None:
@@ -168,3 +177,9 @@ class Session:
 
     def _set_agent_messages(self, messages: list[dict]) -> None:
         self.agent.state.messages = messages
+
+    def _log_trace(self, event: dict) -> None:
+        try:
+            self.trace.log(event)
+        except Exception as error:
+            self.trace_errors.append(str(error))

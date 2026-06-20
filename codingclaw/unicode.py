@@ -7,10 +7,27 @@ REPLACEMENT_CHARACTER = "\ufffd"
 
 
 def sanitize_text(text: str) -> str:
-    """Replace isolated UTF-16 surrogate code points with valid Unicode."""
+    """Combine valid surrogate pairs and replace isolated surrogates."""
     if not any(0xD800 <= ord(char) <= 0xDFFF for char in text):
         return text
-    return "".join(REPLACEMENT_CHARACTER if 0xD800 <= ord(char) <= 0xDFFF else char for char in text)
+
+    sanitized: list[str] = []
+    index = 0
+    while index < len(text):
+        code = ord(text[index])
+        if 0xD800 <= code <= 0xDBFF and index + 1 < len(text):
+            next_code = ord(text[index + 1])
+            if 0xDC00 <= next_code <= 0xDFFF:
+                scalar = 0x10000 + ((code - 0xD800) << 10) + (next_code - 0xDC00)
+                sanitized.append(chr(scalar))
+                index += 2
+                continue
+        if 0xD800 <= code <= 0xDFFF:
+            sanitized.append(REPLACEMENT_CHARACTER)
+        else:
+            sanitized.append(text[index])
+        index += 1
+    return "".join(sanitized)
 
 
 def sanitize_json_value(value: Any) -> Any:

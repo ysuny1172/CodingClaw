@@ -50,6 +50,7 @@ class UnicodeSafetyTest(unittest.TestCase):
 
         self.assertEqual(sanitized["message"][1]["content"], "bad\ufffdtext")
         self.assertEqual(sanitize_text("\u4e2d\u6587"), "\u4e2d\u6587")
+        self.assertEqual(sanitize_text("\ud83d\ude00"), "\U0001f600")
 
     def test_tool_result_sanitizes_values_before_message_serialization(self):
         result = ToolResult.success({"stdout": "bad\udce4text"})
@@ -79,9 +80,12 @@ class UnicodeSafetyTest(unittest.TestCase):
             with store.path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(polluted_entry) + "\n")
 
-            messages = store.load_messages()
+            reopened = SessionStore.open(Path(tmp), store.path)
+            messages = reopened.load_messages()
 
             self.assertEqual(messages[0]["content"], "bad\ufffdtext")
+            self.assertEqual(reopened.unicode_repairs, 1)
+            self.assertNotIn("\\udce4", reopened.path.read_text(encoding="utf-8").lower())
 
     def test_llm_client_sanitizes_payload_before_utf8_encoding(self):
         client = OpenAICompatibleClient(base_url="https://example.test/v1", api_key="fake")

@@ -119,6 +119,7 @@ def run_interactive(
     error_output = error_output or sys.stderr
 
     print("CodingClaw interactive mode. Type /help for commands.", file=output)
+    print(f"Workspace: {session.workspace_root}", file=output)
     print(f"Session: {session.store.path}", file=output)
     print(f"Trace:   {session.trace.path}", file=output)
     print(f"Context: {session.context_tokens_label()}", file=output)
@@ -145,6 +146,7 @@ def run_interactive(
             print(HELP_TEXT, file=output)
             continue
         if text == "/session":
+            print(f"Workspace: {session.workspace_root}", file=output)
             print(f"Session: {session.store.path}", file=output)
             print(f"Trace:   {session.trace.path}", file=output)
             print(f"Context: {session.context_tokens_label()}", file=output)

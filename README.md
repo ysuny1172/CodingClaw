@@ -73,6 +73,7 @@ codingclaw --session .codingclaw/sessions/20260531T120000Z_abc123.jsonl
 
 Session history is written to `.codingclaw/sessions/`.
 Trace logs are written to `.codingclaw/traces/`.
+Both paths are relative to the active workspace. Interactive startup and `/session` print the resolved workspace and absolute files.
 
 Interactive commands:
 

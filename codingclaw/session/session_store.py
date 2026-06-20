@@ -17,7 +17,9 @@ class SessionStore:
         self.session_id = session_id or uuid4().hex
         self.path = path or self._new_path(self.session_id)
         self.is_new = path is None
+        self.unicode_repairs = 0
         if path is not None:
+            self.unicode_repairs = self._repair_unicode_entries()
             self.session_id = self._load_session_id() or self.session_id
             return
         self._append(
@@ -218,6 +220,26 @@ class SessionStore:
 
     def _first_kept_id(self, compaction: dict) -> object:
         return compaction.get("first_kept_entry_id") or compaction.get("first_kept_message_id")
+
+    def _repair_unicode_entries(self) -> int:
+        raw_lines = self.path.read_text(encoding="utf-8").splitlines()
+        entries: list[dict] = []
+        repairs = 0
+        for line in raw_lines:
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            sanitized = sanitize_json_value(entry)
+            if sanitized != entry:
+                repairs += 1
+            entries.append(sanitized)
+        if repairs:
+            temporary_path = self.path.with_suffix(self.path.suffix + ".tmp")
+            with temporary_path.open("w", encoding="utf-8") as handle:
+                for entry in entries:
+                    handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            temporary_path.replace(self.path)
+        return repairs
 
     def _summary_message(self, summary: str, tokens_before: object) -> Message:
         token_text = f" tokens_before={tokens_before}" if isinstance(tokens_before, int) else ""

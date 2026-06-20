@@ -58,6 +58,24 @@ class SystemPromptTest(unittest.TestCase):
         self.assertIn("Do not add broad skips, xfails", prompt)
         self.assertIn("Never use test changes to work around dependency", prompt)
 
+    def test_requires_observable_behavior_and_regression_verification(self):
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            prompt = build_system_prompt(
+                workspace_root=workspace,
+                tools=ToolRegistry(ToolContext(workspace)),
+                resources=LoadedResources(),
+            )
+
+        self.assertIn("reproduce the reported behavior before editing", prompt)
+        self.assertIn("regression test that fails before the fix and passes after it", prompt)
+        self.assertIn("externally observable behavior", prompt)
+        self.assertIn("parsing, rendering, indexing, serialization, cross-reference", prompt)
+        self.assertIn("A helper-level check alone is not sufficient", prompt)
+        self.assertIn("suppressing an exception, warning, or validation error", prompt)
+        self.assertIn("interpreted and represented correctly", prompt)
+        self.assertIn("test the reported example and at least one nearby existing case", prompt)
+
     def test_safety_guidelines_are_appended_to_custom_system_prompt(self):
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp)
