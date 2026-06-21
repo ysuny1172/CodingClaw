@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -97,6 +98,8 @@ def build_agent_prompt(instance: dict[str, Any]) -> str:
         "- Run relevant existing tests when the local environment supports them.\n"
         "- Do not only explain the solution; modify files in the workspace.\n"
         "- Do not read SWE-bench evaluation logs, hidden tests, gold patches, or other benchmark answers.\n"
+        "- Do not use the network or repository history to search for issue discussions, pull requests, patches, "
+        "commits, branches, tags, or other solutions created after the checked-out benchmark baseline.\n"
         "- Do not commit changes. Finish with a concise summary of the files changed and tests run."
     )
 
@@ -139,8 +142,45 @@ def prepare_repository(
         cwd=repo_dir.parent,
     )
     require_success(clone, f"Cloning {instance['repo']}")
-    checkout = command_runner(["git", "checkout", str(instance["base_commit"])], cwd=repo_dir)
+    base_commit = str(instance["base_commit"])
+    checkout = command_runner(["git", "checkout", "--detach", base_commit], cwd=repo_dir)
     require_success(checkout, f"Checking out {instance['base_commit']}")
+    clean = command_runner(["git", "clean", "-ffdqx"], cwd=repo_dir)
+    require_success(clean, "Cleaning checked-out repository")
+    reinitialize_repository(repo_dir, base_commit=base_commit, command_runner=command_runner)
+
+
+def reinitialize_repository(
+    repo_dir: Path,
+    *,
+    base_commit: str,
+    command_runner: Callable[..., subprocess.CompletedProcess[str]] = run_command,
+) -> None:
+    """Replace cloned history with one synthetic baseline commit."""
+    resolved_repo = repo_dir.resolve()
+    git_dir = (resolved_repo / ".git").resolve()
+    if git_dir.parent != resolved_repo or not git_dir.exists():
+        raise RuntimeError(f"Expected Git metadata inside repository: {git_dir}")
+
+    def remove_readonly(function: Callable[[str], None], path: str, _error: Any) -> None:
+        os.chmod(path, stat.S_IWRITE)
+        function(path)
+
+    shutil.rmtree(git_dir, onerror=remove_readonly)
+
+    commands = [
+        (["git", "init"], "Initializing isolated repository"),
+        (["git", "config", "user.email", "swebench@codingclaw.invalid"], "Configuring Git email"),
+        (["git", "config", "user.name", "CodingClaw SWE-bench"], "Configuring Git name"),
+        (["git", "add", "--all", "--force", "--", "."], "Staging isolated baseline"),
+        (
+            ["git", "commit", "--allow-empty", "--no-gpg-sign", "-m", f"SWE-bench baseline {base_commit}"],
+            "Committing isolated baseline",
+        ),
+    ]
+    for command, description in commands:
+        completed = command_runner(command, cwd=resolved_repo)
+        require_success(completed, description)
 
 
 def is_excluded_patch_path(relative_path: str) -> bool:

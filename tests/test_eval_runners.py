@@ -131,7 +131,62 @@ class EvalRunnersTest(unittest.TestCase):
 
         self.assertIn("Fix the thing.", prompt)
         self.assertIn("Do not read SWE-bench evaluation logs", prompt)
+        self.assertIn("Do not use the network or repository history", prompt)
+        self.assertIn("created after the checked-out benchmark baseline", prompt)
         self.assertIn("Do not commit changes", prompt)
+
+    def test_swebench_reinitialize_repository_removes_future_history_and_refs(self):
+        run_swebench = load_script("run_swebench")
+
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            (repo / "tracked.txt").write_text("baseline\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "baseline"], cwd=repo, check=True, capture_output=True)
+            baseline = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            (repo / "tracked.txt").write_text("future\n", encoding="utf-8")
+            subprocess.run(["git", "commit", "-am", "future"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "tag", "future-tag"], cwd=repo, check=True)
+            subprocess.run(["git", "checkout", "--detach", baseline], cwd=repo, check=True, capture_output=True)
+
+            run_swebench.reinitialize_repository(repo, base_commit=baseline)
+
+            commit_count = subprocess.run(
+                ["git", "rev-list", "--all", "--count"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            tags = subprocess.run(
+                ["git", "tag", "--list"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            remotes = subprocess.run(
+                ["git", "remote"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            tracked_text = (repo / "tracked.txt").read_text(encoding="utf-8")
+
+        self.assertEqual(commit_count, "1")
+        self.assertEqual(tags, "")
+        self.assertEqual(remotes, "")
+        self.assertEqual(tracked_text, "baseline\n")
 
     def test_swebench_collect_patch_includes_new_files_and_excludes_runtime_files(self):
         run_swebench = load_script("run_swebench")
