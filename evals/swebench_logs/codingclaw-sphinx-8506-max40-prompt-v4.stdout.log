@@ -1,0 +1,5 @@
+GENERATE sphinx-doc__sphinx-8506
+READY sphinx-doc__sphinx-8506: 2286 patch bytes
+Predictions: /mnt/d/Python_Projects/CodingClaw/evals/swebench_runs/codingclaw-sphinx-8506-max40-prompt-v4/predictions.jsonl
+EVALUATE 1 instance(s) with run id codingclaw-sphinx-8506-max40-prompt-v4
+Resolved: 1/1 (100.00%)
